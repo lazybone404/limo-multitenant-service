@@ -1,0 +1,22 @@
+# python-core 依赖（core 能力：视频/文档 → 笔记，供 Java 调用）
+# 安装：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Web 服务
+fastapi
+uvicorn[standard]
+python-multipart        # 处理文件上传（/convert 传 file）
+httpx                   # 调 LLM
+
+# 配置
+pyyaml
+
+# 文档提取（5 种类型，本地库、无需 API key）
+python-docx             # Word .docx
+pypdfium2               # PDF
+python-pptx             # PPT .pptx
+openpyxl                # Excel .xlsx
+ebooklib                # EPUB
+beautifulsoup4          # EPUB/HTML 内容解析
+
+# LLM 生成（OpenAI 兼容；也可用 DashScope 等）
+openai

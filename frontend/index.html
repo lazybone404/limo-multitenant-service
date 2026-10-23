@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
+    <title>LiMo</title>
+    <!-- 防闪烁：在 CSS 加载前同步设置 data-theme + color-scheme -->
+    <script>
+      (function() {
+        try {
+          var m = localStorage.getItem('mbw_theme') || 'system';
+          var r = m === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : m;
+          document.documentElement.setAttribute('data-theme', r);
+          document.documentElement.style.colorScheme = r;
+          var a = localStorage.getItem('mbw_accent') || 'sky';
+          document.documentElement.setAttribute('data-accent', a);
+          var tx = localStorage.getItem('mbw_texture') || 'plain';
+          document.documentElement.setAttribute('data-texture', tx);
+          var fn = localStorage.getItem('mbw_font') || 'system';
+          document.documentElement.setAttribute('data-font', fn);
+          var b = localStorage.getItem('mbw_base') || 'warm';
+          document.documentElement.setAttribute('data-base', b);
+        } catch(e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

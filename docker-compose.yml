@@ -1,0 +1,57 @@
+# limo-app full-stack via Docker Compose
+#   docker compose up -d --build    -> mysql + backend(8082) + python-core(8001) + frontend(5174)
+#   docker compose down             -> stop & clean
+# note: no Redis (limo java-service uses MySQL only)
+services:
+  mysql:
+    image: mysql:8
+    container_name: limo-mysql
+    environment:
+      # 本地默认值只为开箱能跑；要换密码用 MYSQL_ROOT_PASSWORD 环境变量注入，
+      # 别把真实密码写回这个文件（这是公开仓库）。
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-88888888}"
+    ports:
+      - "3308:3306"   # host 3308 -> container 3306 (avoid host 3306 + book 3307)
+    volumes:
+      - limo-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  backend:
+    build: ./java-service
+    container_name: limo-backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+      python-core:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/limo?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: "${MYSQL_ROOT_PASSWORD:-88888888}"
+      LIMO_PYTHON_CORE_BASE_URL: "http://python-core:8001"
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+
+  python-core:
+    build: ./python-core
+    container_name: limo-python
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: limo-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5174:80"   # host 5174 -> nginx 80 (library-service takes 5173)
+
+volumes:
+  limo-mysql-data:

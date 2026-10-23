@@ -1,0 +1,4 @@
+# 仓库里统一 LF；Windows 的批处理必须保留 CRLF，否则 cmd 解析会出错
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

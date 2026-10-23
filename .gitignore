@@ -1,0 +1,42 @@
+# ---- Java ----
+target/
+*.class
+*.jar
+*.war
+!**/maven-wrapper.jar
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ---- 前端 ----
+node_modules/
+dist/
+.vite/
+
+# ---- 本地配置与数据 ----
+# 真实密钥、库文件、上传的临时文件都不进版本库
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- 日志与临时产物 ----
+*.log
+logs/
+tmp/
+.tmp/
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
