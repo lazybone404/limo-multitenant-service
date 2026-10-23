@@ -61,6 +61,15 @@ public class Task {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
+    /**
+     * 进入 PROCESSING 的时刻（认领时写入）。
+     *
+     * 为什么单独记这一个时间、不直接用 createdAt：任务是先进队列（PENDING）再被线程认领的。
+     * 高峰期排了十分钟队才开始处理，用 createdAt 判断就会被误判成「卡死了」而被回收，
+     * 而它其实正常得很。判断存活要看「开始干的时刻」，不是「提交的时刻」。
+     */
+    private LocalDateTime processingStartedAt;
+
     /** 关联的来源 id（一次转换的来源） */
     @Column
     private Long sourceId;

@@ -31,6 +31,13 @@ public final class TaskStatus {
     /** 输入有问题（格式不支持 / 链接失效 / 文件损坏）→ 用户该做的事：换一个文件或链接 */
     public static final String BAD_INPUT = "BAD_INPUT";
 
+    /**
+     * 处理超时：认领它的那个线程已经不在了（进程重启、节点挂掉）。
+     * → 用户该做的事：重新提交一次。
+     * 由 TaskRecovery 定时扫描写入，不来自异常，所以不参与 reasonOf() 的映射。
+     */
+    public static final String TIMEOUT = "TIMEOUT";
+
     /** 其余未分类 -> 用户该做的事：联系我们（并且这条日志里一定有堆栈） */
     public static final String UNKNOWN = "UNKNOWN";
 

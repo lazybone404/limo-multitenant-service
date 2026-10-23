@@ -23,12 +23,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.function.Supplier;
 
@@ -63,7 +67,7 @@ public class TaskService {
     /** 提交任务（文本 / URL）：立即返回 taskId（PENDING），后台异步处理 */
     public TaskResponse createTask(TaskRequest req) {
         Long uid = UserContext.get();
-        Task task = submit(uid, req.getType(), sourceOf(req), null);
+        Task task = submit(uid, req.getType(), sourceOf(req), identityOf(req));
 
         // 命中幂等去重：把已有任务原样还回去，不再建、不再扣
         if (!TaskStatus.PENDING.equals(task.getStatus())) return TaskResponse.of(task);
@@ -81,9 +85,10 @@ public class TaskService {
         Long uid = UserContext.get();
         String origin = "file:" + (file == null ? "doc" : file.getOriginalFilename());
 
-        // 先落盘再建任务；建任务失败时把它清掉，别留垃圾
-        File tmp = new File(System.getProperty("java.io.tmpdir"),
-                "limo_" + System.currentTimeMillis() + "_" + (file == null ? "doc" : file.getOriginalFilename()));
+        // 临时文件名用 UUID，不用毫秒时间戳：同一毫秒里两个上传会拿到同一个名字，
+        // 后落盘的那个把前一个覆盖掉，用户拿到的是别人文件的处理结果。
+        // 扩展名保留，processFile 靠它判断类型。
+        File tmp = new File(System.getProperty("java.io.tmpdir"), "limo_" + newTmpName(file));
         try {
             file.transferTo(tmp);
         } catch (Exception e) {
@@ -93,9 +98,10 @@ public class TaskService {
 
         Task task;
         try {
-            // 文件也参与去重，但键里带文件大小：光看文件名会把「同名但内容不同」的两份
-            // 误判成同一份，那比不去重更糟。名字 + 大小相同的在途文件才认为是一次重复提交。
-            task = submit(uid, type, origin, String.valueOf(tmp.length()));
+            // 去重键用**文件内容的 SHA-256**，不是文件名 + 大小。
+            // 只看名字会把「同名但内容不同」的两份误判成同一份（用户拿不到自己那份的结果），
+            // 只看名字 + 大小还会漏掉「改了两个字但长度没变」的情况。
+            task = submit(uid, type, origin, "file|" + sha256Of(tmp));
         } catch (RuntimeException e) {
             tmp.delete();
             throw e;
@@ -129,15 +135,16 @@ public class TaskService {
      * 现在先算一个 dedupKey 写进唯一索引列：并发的两个请求，一个能插进去，
      * 另一个撞索引，然后回来查那条已经存在的数据，这样「同一来源同时只处理一份」才真成立。
      *
-     * @param salt 额外的区分度。文件用文件大小，文本/URL 传 null
+     * @param identity 去重键的原料，必须能唯一区分一份内容：URL 原文、文本全文、文件内容哈希。
+     *                 传 null 表示这份输入没有可比对的同一性（比如空输入的兜底），不参与去重。
      */
-    private Task submit(Long uid, String type, String origin, String salt) {
+    private Task submit(Long uid, String type, String origin, String identity) {
         checkNoteQuota(uid);
 
-        final String key = dedupKey(uid, type, origin, salt);
+        final String key = (identity == null) ? null : dedupKey(uid, type, identity);
 
         // 先查一次：绝大多数提交（没有并发）在这一步就命中，不必靠异常做控制流
-        Optional<Task> dup = taskRepo.findFirstByDedupKey(key);
+        Optional<Task> dup = key == null ? Optional.empty() : taskRepo.findFirstByDedupKey(key);
         if (dup.isPresent()) {
             log.info("用户 {} 的来源已有在途任务 {}，直接复用", uid, dup.get().getId());
             return dup.get();
@@ -181,19 +188,66 @@ public class TaskService {
         return task;
     }
 
-    /** 去重键：同一用户 + 同一类型 + 同一来源（+ 可选 salt）的 sha256，不落明文来源。 */
-    private String dedupKey(Long uid, String type, String origin, String salt) {
-        String raw = uid + "|" + type + "|" + origin + (salt == null ? "" : "|" + salt);
+    /**
+     * 去重键：同一用户 + 同一类型 + 同一份内容 的 sha256。
+     *
+     * ⚠️ 原料必须是 **identity**（完整输入），不能是 origin。
+     * origin 是给用户看的展示字段，文本会被截断到 100 字（见 sourceOf）。用截断值算键，
+     * 两段前 100 字相同、后面完全不同的文本就会得到同一个键 —— 后提交的那份被静默当成
+     * 重复提交，用户拿到的是前一份的笔记，而且不会报错。这一条踩过。
+     */
+    private String dedupKey(Long uid, String type, String identity) {
+        return sha256Hex(uid + "|" + type + "|" + identity);
+    }
+
+    /** 未截断的输入本身，作为去重键的原料。空输入返回 null（不参与去重）。 */
+    private String identityOf(TaskRequest req) {
+        if (req.getUrl() != null && !req.getUrl().isBlank()) return "url|" + req.getUrl().trim();
+        if (req.getText() != null && !req.getText().isBlank()) return "text|" + req.getText();
+        return null;
+    }
+
+    private String sha256Hex(String raw) {
         try {
             byte[] h = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(64);
-            for (byte b : h) sb.append(String.format("%02x", b));
-            return sb.toString();
+            return toHex(h);
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 是 JVM 规范要求必须支持的算法，取不到说明运行环境坏了。
             // 这不是业务失败，别包成 BizException 让用户看到一句「请重试」。
             throw new IllegalStateException("JVM 不支持 SHA-256，无法计算去重键", e);
         }
+    }
+
+    /** 文件内容的 sha256，流式读，不把整份文件读进内存。 */
+    private String sha256Of(File f) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = new FileInputStream(f)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            }
+            return toHex(md.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("JVM 不支持 SHA-256", e);
+        } catch (IOException e) {
+            throw new BizException(400, "文件读取失败");
+        }
+    }
+
+    private static String toHex(byte[] h) {
+        StringBuilder sb = new StringBuilder(h.length * 2);
+        for (byte b : h) sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    /** 临时文件名：UUID + 原扩展名。 */
+    private static String newTmpName(MultipartFile file) {
+        String name = (file == null || file.getOriginalFilename() == null)
+                ? "doc" : file.getOriginalFilename();
+        int dot = name.lastIndexOf('.');
+        String ext = (dot > 0 && name.length() - dot <= 10) ? name.substring(dot) : "";
+        return UUID.randomUUID() + ext;
     }
 
     // ==================== 执行（两种提交共用的唯一路径）====================
@@ -203,7 +257,8 @@ public class TaskService {
         // 认领：只有还是 PENDING 才能进 PROCESSING，返回 0 说明已经被别人处理过。
         // 原先的写法是先查出来、setStatus、再 save —— 两个线程能同时认领同一个任务，
         // 结果是同一个来源被处理两遍、扣两次积分。
-        if (taskRepo.compareAndSetStatus(taskId, TaskStatus.PENDING, TaskStatus.PROCESSING) == 0) {
+        if (taskRepo.compareAndSetStatus(taskId, TaskStatus.PENDING, TaskStatus.PROCESSING,
+                LocalDateTime.now()) == 0) {
             log.warn("任务 {} 不在 PENDING（已被处理或不存在），本次跳过", taskId);
             return;
         }

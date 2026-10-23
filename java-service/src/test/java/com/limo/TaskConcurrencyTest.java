@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,9 +43,11 @@ class TaskConcurrencyTest {
         Task t = taskRepo.save(Task.builder().userId(7001L).type("document")
                 .source("claim-once").sourceId(7001L).status(TaskStatus.PENDING).build());
 
-        assertThat(taskRepo.compareAndSetStatus(t.getId(), TaskStatus.PENDING, TaskStatus.PROCESSING))
+        assertThat(taskRepo.compareAndSetStatus(t.getId(), TaskStatus.PENDING, TaskStatus.PROCESSING,
+                        LocalDateTime.now()))
                 .as("第一次认领应当成功").isEqualTo(1);
-        assertThat(taskRepo.compareAndSetStatus(t.getId(), TaskStatus.PENDING, TaskStatus.PROCESSING))
+        assertThat(taskRepo.compareAndSetStatus(t.getId(), TaskStatus.PENDING, TaskStatus.PROCESSING,
+                        LocalDateTime.now()))
                 .as("状态已经不是 PENDING，第二次必须返回 0").isZero();
     }
 
@@ -64,7 +67,7 @@ class TaskConcurrencyTest {
                 try {
                     start.await();
                     if (taskRepo.compareAndSetStatus(t.getId(), TaskStatus.PENDING,
-                            TaskStatus.PROCESSING) == 1) {
+                            TaskStatus.PROCESSING, LocalDateTime.now()) == 1) {
                         claimed.incrementAndGet();
                     }
                 } catch (Exception ignored) {

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,9 +31,19 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
      * 这就是「条件更新」——判断和写入在同一条 SQL 里由数据库原子完成。
      * 原先的写法是先 findById 读出来、改字段、再 save，两个线程能同时把
      * PENDING 改成 PROCESSING，同一个任务被处理两遍、扣两次积分。
+     *
+     * 认领的同时记下开始时刻：回收超时任务要靠它，不能靠 createdAt（排队时间不算）。
      */
     @Modifying
     @Transactional
-    @Query("update Task t set t.status = :to where t.id = :id and t.status = :from")
-    int compareAndSetStatus(@Param("id") Long id, @Param("from") String from, @Param("to") String to);
+    @Query("update Task t set t.status = :to, t.processingStartedAt = :now "
+            + "where t.id = :id and t.status = :from")
+    int compareAndSetStatus(@Param("id") Long id, @Param("from") String from,
+                            @Param("to") String to, @Param("now") LocalDateTime now);
+
+    /**
+     * 找出卡在某个状态、且开始时刻早于 before 的任务 —— 给超时回收用。
+     * 能查出来的都是「认领它的那个线程已经不在了」的任务。
+     */
+    List<Task> findByStatusAndProcessingStartedAtBefore(String status, LocalDateTime before);
 }
